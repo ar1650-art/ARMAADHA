@@ -233,7 +233,7 @@ th{background:#4a170e;color:#ffc247}
     if(!API_URL){ (fail||(()=>{}))(new Error("Set CLASS_FUND_API_URL in config.js first.")); return; }
     const params = new URLSearchParams();
     params.set("api","1");
-    params.set("action",action);
+    params.set("action", action==="checkLogin" ? "login" : action);
     params.set("callback","__cfpwa_"+Date.now()+"_"+Math.floor(Math.random()*1e6));
     if(action!=="login"){
       const token=sessionStorage.getItem("classFundSession");
