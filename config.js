@@ -1,2 +1,2 @@
-// Google Apps Script Web App endpoint for the B ARCH Class Fund PWA.
+// Google Apps Script API URL
 window.CLASS_FUND_API_URL = 'https://script.google.com/macros/s/AKfycbyta1yUnjQdaEJQxLmJr9Aqt0pyuvhBRMUmNMGcGQ7dMsUyRxsxsRtD-glrUvcaofNM/exec';
