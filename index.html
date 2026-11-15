@@ -233,7 +233,8 @@ th{background:#4a170e;color:#ffc247}
     if(!API_URL){ (fail||(()=>{}))(new Error("Set CLASS_FUND_API_URL in config.js first.")); return; }
     const params = new URLSearchParams();
     params.set("api","1");
-    params.set("action", action==="checkLogin" ? "login" : action);
+    const apiAction = action === "checkLogin" ? "login" : action;
+    params.set("action",apiAction);
     params.set("callback","__cfpwa_"+Date.now()+"_"+Math.floor(Math.random()*1e6));
     if(action!=="login"){
       const token=sessionStorage.getItem("classFundSession");
@@ -248,7 +249,7 @@ th{background:#4a170e;color:#ffc247}
     const finish=(fn,value)=>{ if(done)return; done=true; clearTimeout(timer); script.remove(); try{delete window[cb];}catch(e){} if(fn)fn(value); };
     window[cb]=result=>{
       if(result && result.__error){ finish(fail,new Error(result.__error)); return; }
-      if(action==="login"){
+      if(apiAction==="login"){
         if(result && result.ok && result.token) sessionStorage.setItem("classFundSession",result.token);
         else sessionStorage.removeItem("classFundSession");
         finish(ok,!!(result&&result.ok));
