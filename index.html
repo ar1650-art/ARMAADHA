@@ -59,8 +59,12 @@ th{background:#4a170e;color:#ffc247}
   <img class="login-logo" src="" alt="AB MAADHA Logo">
   <h2>B ARCH Class Fund</h2>
   <p class="muted">Admin: username <b>admin</b>. Students: use your AR ID.</p>
-  <label>Username / AR ID</label>
-  <input id="loginUsername" placeholder="admin or AR1679" autocomplete="username">
+  <div id="loginUsernameWrap">
+   <label>Username / AR ID</label>
+   <input id="loginUsername" placeholder="admin or AR1679" autocomplete="username">
+  </div>
+  <p id="rememberedAccount" class="muted" style="display:none;margin:8px 0 0"></p>
+  <button type="button" id="changeAccountButton" class="password-toggle" onclick="useAnotherAccount()" style="display:none;padding:6px 0">Use another account</button>
   <label>Password</label>
   <div style="display:flex;gap:8px;align-items:center">
    <input type="password" id="loginPassword" placeholder="Enter password" autocomplete="current-password" style="flex:1;min-width:0">
@@ -364,17 +368,46 @@ function openPage(id,btn){
 }
 
 let currentRole="", currentUserName="";
+const SAVED_LOGIN_USERNAME_KEY="classFundSavedUsername";
+function applyRememberedLogin(){
+ const saved=localStorage.getItem(SAVED_LOGIN_USERNAME_KEY)||"";
+ const wrap=document.getElementById("loginUsernameWrap");
+ const input=document.getElementById("loginUsername");
+ const remembered=document.getElementById("rememberedAccount");
+ const change=document.getElementById("changeAccountButton");
+ if(saved){
+  input.value=saved;
+  wrap.style.display="none";
+  remembered.style.display="block";
+  remembered.textContent="Account: "+saved+". Enter your password to continue.";
+  change.style.display="inline-flex";
+ }else{
+  wrap.style.display="block";
+  remembered.style.display="none";
+  change.style.display="none";
+ }
+}
+function useAnotherAccount(){
+ localStorage.removeItem(SAVED_LOGIN_USERNAME_KEY);
+ document.getElementById("loginUsername").value="";
+ document.getElementById("loginPassword").value="";
+ applyRememberedLogin();
+ document.getElementById("loginUsername").focus();
+ document.getElementById("loginMessage").textContent="Enter username and password.";
+}
 function login(){
- const username=document.getElementById("loginUsername").value.trim();
+ const username=(document.getElementById("loginUsername").value.trim()||localStorage.getItem(SAVED_LOGIN_USERNAME_KEY)||"");
  const password=document.getElementById("loginPassword").value;
  const button=document.getElementById("loginButton");
  const message=document.getElementById("loginMessage");
- if(!username||!password){message.textContent="Enter username and password.";return;}
+ if(!username||!password){message.textContent=username?"Enter your password.":"Enter username and password.";return;}
  button.disabled=true; message.textContent="Checking login...";
  google.script.run
   .withSuccessHandler(auth=>{
    button.disabled=false;
    if(auth && auth.ok){
+    // Remember username only on this browser. Never store the password.
+    localStorage.setItem(SAVED_LOGIN_USERNAME_KEY,username);
     currentRole=auth.role||"student"; currentUserName=auth.name||username;
     document.getElementById("loginScreen").style.display="none";
     document.getElementById("appContent").style.display="block";
@@ -388,6 +421,7 @@ function login(){
   .loginAccount(username,password);
 }
 document.addEventListener("DOMContentLoaded",()=>{
+ applyRememberedLogin();
  ["loginUsername","loginPassword"].forEach(id=>document.getElementById(id).addEventListener("keydown",e=>{if(e.key==="Enter")login();}));
 });
 function applyRoleUI(){
