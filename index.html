@@ -40,12 +40,11 @@ th{background:#4a170e;color:#ffc247}
  .header-logo{width:50px;height:50px}
 }
 </style>
-<link rel="manifest" href="./manifest.webmanifest">
-<link rel="apple-touch-icon" href="./icons/icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#310906">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png">
+<link rel="icon" href="icons/icon-192.png">
 <script src="config.js"></script>
 </head>
 <body>
@@ -54,8 +53,10 @@ th{background:#4a170e;color:#ffc247}
  <div class="card login-card" style="width:100%;max-width:390px;padding:28px">
   <img class="login-logo" src="" alt="AB MAADHA Logo">
   <h2>B ARCH Class Fund</h2>
-  <p class="muted">Authorized Google account: no password required. Other accounts: enter app password.</p>
-  <label>App Password</label>
+  <p class="muted">Admin: username <b>admin</b>. Students: use your AR ID.</p>
+  <label>Username / AR ID</label>
+  <input id="loginUsername" placeholder="admin or AR1679" autocomplete="username">
+  <label>Password</label>
   <input type="password" id="loginPassword" placeholder="Enter password" autocomplete="current-password">
   <button class="action" id="loginButton" style="width:100%" onclick="login()">Login</button>
   <p id="loginMessage" class="muted" style="color:#ff9b83"></p>
@@ -174,6 +175,15 @@ th{background:#4a170e;color:#ffc247}
 
 <section id="studentPage" class="page">
 <h2>Student Paid / Pending</h2>
+<div class="card admin-only" id="accountManager">
+ <h3>Student Login Accounts</h3>
+ <p class="muted">Create or reset a student's login. A temporary password is shown once; share it privately.</p>
+ <label>Student AR ID</label>
+ <select id="accountArId"></select>
+ <button class="action" onclick="createStudentLogin()">Create / Reset Login</button>
+ <button class="action" onclick="refreshAccountList()">Refresh Account List</button>
+ <div class="scroll"><table><thead><tr><th>AR ID</th><th>Student</th><th>Status</th><th>Action</th></tr></thead><tbody id="accountRows"></tbody></table></div>
+</div>
 <div class="card">
 <input id="search" placeholder="Search student..." oninput="renderStudents()">
 <div class="scroll">
@@ -224,113 +234,65 @@ th{background:#4a170e;color:#ffc247}
 
 
 <script>
-/* GitHub Pages -> Google Apps Script JSONP bridge */
-(function () {
-  const API_URL = String(window.CLASS_FUND_API_URL || "").trim();
-  let successHandler = null;
-  let failureHandler = null;
-
-  function apiCall(action, args, onSuccess, onFailure) {
-    if (!API_URL) {
-      (onFailure || alert)(new Error("config.js did not load. Check that config.js is in the same GitHub Pages folder as index.html."));
-      return;
+/* GitHub Pages -> Apps Script JSONP bridge.
+   Keep the deployment URL in config.js. The password is sent only at login;
+   later calls use a short-lived server-side session token. */
+(function(){
+  const API_URL = window.CLASS_FUND_API_URL || "";
+  let success = null, failure = null;
+  function call(action,args,ok,fail){
+    if(!API_URL){ (fail||(()=>{}))(new Error("Set CLASS_FUND_API_URL in config.js first.")); return; }
+    const params = new URLSearchParams();
+    params.set("api","1");
+    params.set("action",action);
+    params.set("callback","__cfpwa_"+Date.now()+"_"+Math.floor(Math.random()*1e6));
+    if(action!=="login"){
+      const token=sessionStorage.getItem("classFundSession");
+      if(!token){ (fail||(()=>{}))(new Error("Please log in again.")); return; }
+      params.set("token",token);
     }
-
-    const callbackName = "__classFund_" + Date.now() + "_" + Math.floor(Math.random() * 1000000);
-    const params = new URLSearchParams({
-      api: "1",
-      action: action,
-      callback: callbackName,
-      payload: toBase64Url(JSON.stringify(args))
-    });
-
-    if (action !== "login") {
-      const token = sessionStorage.getItem("classFundSession");
-      if (!token) {
-        (onFailure || alert)(new Error("Your session has expired. Please log in again."));
-        return;
-      }
-      params.set("token", token);
-    }
-
-    const separator = API_URL.includes("?") ? "&" : "?";
-    const script = document.createElement("script");
-    let timer = null;
-    let finished = false;
-
-    function finish(handler, value) {
-      if (finished) return;
-      finished = true;
-      if (timer) clearTimeout(timer);
-      script.onerror = null;
-      script.onload = null;
-      script.remove();
-      try { delete window[callbackName]; } catch (_) { window[callbackName] = undefined; }
-      if (typeof handler === "function") handler(value);
-    }
-
-    window[callbackName] = function (result) {
-      if (result && result.__error) {
-        finish(onFailure, new Error(result.__error));
-        return;
-      }
-      if (action === "login") {
-        if (result && result.ok && result.token) {
-          sessionStorage.setItem("classFundSession", result.token);
-          finish(onSuccess, true);
+    const bytes = new TextEncoder().encode(JSON.stringify(args));
+    let binary=""; bytes.forEach(b=>binary+=String.fromCharCode(b));
+    params.set("payload",btoa(binary).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""));
+    const cb=params.get("callback");
+    let script=document.createElement("script"), done=false;
+    const finish=(fn,value)=>{ if(done)return; done=true; clearTimeout(timer); script.remove(); try{delete window[cb];}catch(e){} if(fn)fn(value); };
+    window[cb]=result=>{
+      if(result && result.__error){ finish(fail,new Error(result.__error)); return; }
+      if(action==="login"){
+        if(result && result.ok && result.token){
+          sessionStorage.setItem("classFundSession",result.token);
+          sessionStorage.setItem("classFundRole",result.role||"");
+          sessionStorage.setItem("classFundName",result.name||"");
+          sessionStorage.setItem("classFundMustChange",result.mustChangePassword?"1":"0");
         } else {
           sessionStorage.removeItem("classFundSession");
-          finish(onSuccess, false);
+          sessionStorage.removeItem("classFundRole");
+          sessionStorage.removeItem("classFundName");
+          sessionStorage.removeItem("classFundMustChange");
         }
-      } else {
-        finish(onSuccess, result);
-      }
+        finish(ok,result||false);
+      } else finish(ok,result);
     };
-
-    script.onerror = function () {
-      finish(onFailure, new Error("Apps Script request could not load. Confirm that the latest Web App deployment is accessible to Anyone."));
-    };
-    script.onload = function () {
-      // A successful JSONP response calls the callback. If it did not, report a useful error.
-      if (!finished) finish(onFailure, new Error("Apps Script loaded but did not return the expected JSONP callback. Check Code.gs doGet() and handlePwaApi_()."));
-    };
-
-    script.src = API_URL + separator + params.toString() + "&_=" + Date.now();
-    timer = setTimeout(function () {
-      finish(onFailure, new Error("Apps Script request timed out. Please check the deployment URL and try again."));
-    }, 25000);
+    script.onerror=()=>finish(fail,new Error("Cannot connect to Google Apps Script. Check deployment URL and access settings."));
+    script.src=API_URL+(API_URL.includes("?")?"&":"?")+params.toString();
+    const timer=setTimeout(()=>finish(fail,new Error("Request timed out. Please try again.")),25000);
     document.head.appendChild(script);
   }
-
-  function toBase64Url(value) {
-    const bytes = new TextEncoder().encode(value);
-    let binary = "";
-    bytes.forEach(byte => binary += String.fromCharCode(byte));
-    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-  }
-
-  const runner = new Proxy({}, {
-    get: function (_target, property) {
-      if (property === "withSuccessHandler") {
-        return function (fn) { successHandler = fn; return runner; };
-      }
-      if (property === "withFailureHandler") {
-        return function (fn) { failureHandler = fn; return runner; };
-      }
-      return function (...args) {
-        const onSuccess = successHandler;
-        const onFailure = failureHandler;
-        successHandler = null;
-        failureHandler = null;
-        const method = String(property);
-        const action = method === "checkLogin" ? "login" : method;
-        apiCall(action, args, onSuccess, onFailure);
+  const runner=new Proxy({},{
+    get(_target,prop){
+      if(prop==="withSuccessHandler") return fn=>{success=fn;return runner;};
+      if(prop==="withFailureHandler") return fn=>{failure=fn;return runner;};
+      return (...args)=>{
+        const ok=success, fail=failure; success=null; failure=null;
+        // The Apps Script API calls this endpoint "login"; the existing UI
+        // uses the Apps Script method name "checkLogin". Translate it here.
+        const action = (String(prop) === "checkLogin" || String(prop) === "loginAccount") ? "login" : String(prop);
+        call(action,args,ok,fail);
       };
     }
   });
-
-  // Compatibility layer for the existing UI calls below.
-  window.google = { script: { run: runner } };
+  window.google={script:{run:runner}};
 })();
 </script>
 
@@ -352,47 +314,80 @@ function esc(v){
 }
 
 function openPage(id,btn){
+ if(currentRole!=="admin" && ["openingPage","paymentPage","expensePage","categoryPage","studentPage"].includes(id)) return;
  document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
  document.querySelectorAll(".nav").forEach(b=>b.classList.remove("active"));
  const page=document.getElementById(id);
  if(page) page.classList.add("active");
  btn.classList.add("active");
  if(id==="categoryPage") refreshCategories();
+ if(id==="studentPage" && currentRole==="admin") refreshAccountList();
 }
 
+let currentRole="", currentUserName="";
 function login(){
+ const username=document.getElementById("loginUsername").value.trim();
  const password=document.getElementById("loginPassword").value;
  const button=document.getElementById("loginButton");
  const message=document.getElementById("loginMessage");
- button.disabled=true;
- message.textContent="Checking login...";
+ if(!username||!password){message.textContent="Enter username and password.";return;}
+ button.disabled=true; message.textContent="Checking login...";
  google.script.run
-  .withSuccessHandler(ok=>{
+  .withSuccessHandler(auth=>{
    button.disabled=false;
-   if(ok===true){
+   if(auth && auth.ok){
+    currentRole=auth.role||"student"; currentUserName=auth.name||username;
     document.getElementById("loginScreen").style.display="none";
     document.getElementById("appContent").style.display="block";
     message.textContent="";
-    load();
-   }else message.textContent="Incorrect password. Please try again.";
+    applyRoleUI();
+    if(auth.mustChangePassword && currentRole==="student") showMandatoryPasswordChange();
+    else load();
+   }else message.textContent="Incorrect username or password, or account disabled.";
   })
-  .withFailureHandler(e=>{
-   button.disabled=false;
-   message.textContent=e&&e.message?e.message:"Login failed.";
-  })
-  .checkLogin(password);
+  .withFailureHandler(e=>{button.disabled=false;message.textContent=e&&e.message?e.message:"Login failed.";})
+  .loginAccount(username,password);
+}
+document.addEventListener("DOMContentLoaded",()=>{
+ ["loginUsername","loginPassword"].forEach(id=>document.getElementById(id).addEventListener("keydown",e=>{if(e.key==="Enter")login();}));
+});
+function applyRoleUI(){
+ const admin=currentRole==="admin";
+ document.querySelectorAll(".admin-only").forEach(el=>el.style.display=admin?"block":"none");
+ const adminPages=["openingPage","paymentPage","expensePage","categoryPage","studentPage"];
+ adminPages.forEach(id=>{const page=document.getElementById(id);if(page)page.dataset.adminOnly="1";});
+ document.querySelectorAll(".nav").forEach(btn=>{
+  const target=(btn.getAttribute("onclick")||"");
+  const restricted=adminPages.some(id=>target.includes("'"+id+"'"));
+  btn.style.display=(!admin&&restricted)?"none":"block";
+ });
+ if(!admin){
+  const opening=document.getElementById("opening"); if(opening)opening.closest(".card").style.display="none";
+  const balance=document.getElementById("balance"); if(balance)balance.closest(".card").style.display="none";
+  document.getElementById("count").closest(".card").style.display="none";
+ } else {
+  ["opening","balance","count"].forEach(id=>{const el=document.getElementById(id);if(el)el.closest(".card").style.display="block";});
+ }
+}
+function createStudentLogin(){
+ const id=document.getElementById("accountArId").value; if(!id)return;
+ google.script.run.withSuccessHandler(r=>{alert("SAVE THIS TEMPORARY PASSWORD NOW\n\nStudent: "+r.name+"\nUsername: "+r.username+"\nPassword: "+r.temporaryPassword);refreshAccountList();})
+ .withFailureHandler(e=>alert(e.message||e)).createStudentAccount(id);
+}
+function refreshAccountList(){
+ google.script.run.withSuccessHandler(rows=>{
+  document.getElementById("accountRows").innerHTML=(rows||[]).map(a=>`<tr><td>${esc(a.username)}</td><td>${esc(a.name)}</td><td>${a.active?"Active":"Disabled"}</td><td><button class="action" onclick="toggleStudentAccount('${esc(a.username)}',${!a.active})">${a.active?"Disable":"Enable"}</button></td></tr>`).join("");
+ }).withFailureHandler(e=>alert(e.message||e)).listStudentAccounts();
+}
+function toggleStudentAccount(id,active){
+ google.script.run.withSuccessHandler(()=>refreshAccountList()).withFailureHandler(e=>alert(e.message||e)).setStudentAccountActive(id,active);
 }
 
-document.addEventListener("DOMContentLoaded",()=>{
- document.getElementById("loginPassword").addEventListener("keydown",e=>{
-  if(e.key==="Enter") login();
- });
-});
 function load(){
  google.script.run
   .withSuccessHandler(d=>{
    data=d||{};
-
+   currentRole=d.role||currentRole;
    document.getElementById("opening").textContent=money(d.opening);
    document.getElementById("collection").textContent=money(d.collection);
    document.getElementById("expenses").textContent=money(d.expenses);
@@ -402,6 +397,10 @@ function load(){
 
    const students=d.students||[];
    const categories=d.categories||[];
+   if(currentRole==="admin"){
+    const arIds=[['AR1679','ARUN'],['AR1687','AYISHA NALAKATH'],['AR1658','AYISHA RIDHA E'],['AR1678','DIVANI P P'],['AR1685','FAHIM M FASAL'],['AR1652','FARSEENA V'],['AR1681','FATHIMA BAYAN'],['AR1677','FATHIMA HAIZA C M K'],['AR1649','FATHIMA HAMDAH P'],['AR1668','FATHIMA HIBA PE'],['AR1643','FATHIMA NASRIN K'],['AR1665','FATHIMA NIDHA KP'],['AR1655','FATHIMA RASHFIN TA'],['AR1647','FATHIMA RENA KC'],['AR1691','FATHIMA RIZA T. E'],['AR1669','FATHIMATHUL ASNA M'],['AR1660','HIBA SHARIN K T'],['AR1689','JAZL AHMAD P M'],['AR1663','KADEEJA JOUNA C'],['AR1661','LIYA E P'],['AR1688','LIYA MEHJABIN'],['AR1644','MEERA U'],['AR1653','MINHA K'],['AR1659','MUHAMMED ARSHAK K'],['AR1672','MOHAMMED BASITH'],['AR1662','MUHAMMED ADEEB VM'],['AR1650','MUHAMMED ASIF PARI'],['AR1673','MUHAMMED LIYAN'],['AR1654','MUHAMMED NAVEDUL ANJOOM AT'],['AR1670','MUHAMMED RAYAN M'],['AR1680','MUHAMMED SHAN K'],['AR1657','NADHA MEHJABIN V'],['AR1676','NAFIDA V P'],['AR1675','NAJA FATHIMA'],['AR1640','NAJMA'],['AR1674','NAMITHA M'],['AR1656','NASHVA PV'],['AR1683','RENA MEHARIN AM'],['AR1684','RIMA FATHIMA'],['AR1671','RINSHA SHANAVAS'],['AR1686','RIYA FIBIN P'],['AR1646','SANA N'],['AR1664','SHAFRIN RAHMAN ALYATHODI'],['AR1641','SHAHEEM N'],['AR1651','SHAIMA SHIREEN'],['AR1642','SHEBA IQBAL'],['AR1682','SHEMIL MOHAMMED'],['AR1648','SHINA FATHIMA CK'],['AR1700','FATHIMA JUNNA KK'],['AR1699','FATHIMA SHAHNA M'],['AR1704','JYOTSNA RAJ'],['AR1702','RAHMA K'],['AR1701','SANA K'],['AR1703','SHAHDHA AK'],['AR1705','ZENHA FATHIMA']];
+    const sel=document.getElementById("accountArId"); if(sel)sel.innerHTML=arIds.map(x=>`<option value="${x[0]}">${x[0]} — ${esc(x[1])}</option>`).join("");
+   }
 
    document.getElementById("student").innerHTML=
     students.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join("");
@@ -566,6 +565,21 @@ function saveExpense(){
   .addExpense(description,amount,note);
 }
 
+function saveCategory(){
+ const name=document.getElementById("newCategory").value.trim();
+ const target=document.getElementById("newTarget").value;
+ if(!name)return alert("Enter category name");
+ if(target===""||Number(target)<0)return alert("Enter a valid target amount");
+ google.script.run
+  .withSuccessHandler(()=>{
+   alert("Category added successfully");
+   document.getElementById("newCategory").value="";
+   document.getElementById("newTarget").value="";
+   refreshCategories();
+  })
+  .withFailureHandler(e=>alert(e&&e.message?e.message:e))
+  .addCategory(name,target);
+}
 
 
 let categoryCart=[];
@@ -605,7 +619,45 @@ function renderAssignedCategories(){
 </script>
 <script>
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js", {scope: "./"}).catch(console.warn));
+  window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js").catch(console.warn));
+}
+</script>
+
+<div id="mandatoryPasswordOverlay" style="display:none;position:fixed;inset:0;z-index:99999;background:#091422ed;align-items:center;justify-content:center;padding:16px">
+  <div style="width:min(440px,100%);background:#fff;color:#152033;border-radius:16px;padding:25px;box-shadow:0 15px 50px #0005">
+    <h2 style="margin:0 0 10px">Change temporary password</h2>
+    <p>For security, you must change your AR ID temporary password before accessing your account.</p>
+    <input id="oldStudentPassword" type="password" placeholder="Current password (AR ID)" autocomplete="current-password" style="width:100%;padding:12px;margin:8px 0;box-sizing:border-box">
+    <input id="newStudentPassword" type="password" placeholder="New password (at least 8 characters)" autocomplete="new-password" style="width:100%;padding:12px;margin:8px 0;box-sizing:border-box">
+    <input id="confirmStudentPassword" type="password" placeholder="Confirm new password" autocomplete="new-password" style="width:100%;padding:12px;margin:8px 0;box-sizing:border-box">
+    <p id="changeStudentPasswordMessage" style="color:#b91c1c"></p>
+    <button class="action" id="changeStudentPasswordButton" style="width:100%" onclick="submitMandatoryPasswordChange()">Change Password</button>
+  </div>
+</div>
+<script>
+function showMandatoryPasswordChange(){
+  document.getElementById("mandatoryPasswordOverlay").style.display="flex";
+}
+function submitMandatoryPasswordChange(){
+  const oldP=document.getElementById("oldStudentPassword").value;
+  const newP=document.getElementById("newStudentPassword").value;
+  const confirm=document.getElementById("confirmStudentPassword").value;
+  const msg=document.getElementById("changeStudentPasswordMessage");
+  if(newP.length<8){msg.textContent="Use at least 8 characters.";return;}
+  if(newP!==confirm){msg.textContent="New passwords do not match.";return;}
+  const btn=document.getElementById("changeStudentPasswordButton");
+  btn.disabled=true; msg.textContent="Updating password...";
+  google.script.run.withSuccessHandler(r=>{
+    btn.disabled=false;
+    if(!r || !r.success){msg.textContent="Could not change password.";return;}
+    alert("Password changed successfully. Please log in again.");
+    sessionStorage.removeItem("classFundSession");
+    sessionStorage.removeItem("classFundRole");
+    sessionStorage.removeItem("classFundName");
+    sessionStorage.removeItem("classFundMustChange");
+    location.reload();
+  }).withFailureHandler(e=>{btn.disabled=false;msg.textContent=e.message||String(e);})
+    .changeMyPassword(oldP,newP);
 }
 </script>
 </body>
